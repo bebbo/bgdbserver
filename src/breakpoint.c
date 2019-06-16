@@ -112,6 +112,11 @@ void disableBreakpoints() {
 		if (reginfo.pc == bps[i].address + 1) {
 			--reginfo.pc;
 		}
+
+		if (bps[i].tmp) {
+			delBreakpoint(bps[i].address);
+			--i;
+		}
 	}
 	CacheClearU();
 }
