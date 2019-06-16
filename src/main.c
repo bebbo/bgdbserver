@@ -32,9 +32,8 @@ along with bgdbserver.  If not, see <http://www.gnu.org/licenses/>.
 #include <clib/alib_protos.h>
 #include <proto/dos.h>
 #include <proto/exec.h>
-#include <inline/dos.h>
-#include <inline/exec.h>
 #include <dos/dostags.h>
+#include <exec/execbase.h>
 
 #include <inline/bsdsocket.h>
 
@@ -57,6 +56,8 @@ static BPTR seglist;
 static char * codeseg;
 static char * dataseg;
 static char * bssseg;
+
+static struct Process * theProc;
 
 #define E_EOS 1
 #define E_BUFFER_TO_SMALL 2
@@ -146,7 +147,14 @@ int readcmd(int fd) {
 			dprintf("::<%s>\n", buffer);
 			return pos;
 		}
-		dprintf(":<%s>\n", buffer);
+
+		buffer[pos] = 0;
+		dprintf("%lx %ld:<%s>\n", (int)(buffer[0]), pos, buffer);
+
+		// CTRL+C ends up here
+		if (pos == 1 && buffer[0] == 3) {
+			return pos;
+		}
 	}
 	return -2;
 }
@@ -231,6 +239,50 @@ short reply(int sockfd, char const * q) {
 }
 
 /**
+ * Find the PC starting from the saved SP.
+ */
+UWORD * findPC(APTR in) {
+	UWORD * sp = (UWORD *) in;
+	UWORD attn = SysBase->AttnFlags;
+
+//	printf("start at sp=%p  attn=%04x\n", sp, attn);
+//
+//	for (int i = 0; i < 16; ++i)
+//		printf("%04x ", sp[i]);
+//	printf("\n");
+
+	if (attn > 1) {
+		// 68020+
+		unsigned chk = *(UBYTE*)sp;
+//		printf("ch = %02x\n", chk);
+		if (chk) {
+			// FPU was active
+			sp += 1 + 3 * 2 + 8 * 6 + 1; // ctrl word, FPCR/FPSR/FPIAR, FP0-FP7, ???
+			if (chk == 0x90) {
+				// mid insn
+				sp += 3*2; // mid insn frame
+			}
+			// handle frestore
+			if (attn & AFF_68881) {
+				sp += 0x1c/2 - 2;
+			} else
+			if (attn & AFF_68882) {
+				sp += 0x3c/2 - 2;
+			}
+
+			// disregard UNIMP and BUSY for now^^
+		}
+		sp += 2; // FRESTORE IDLE
+	}
+
+	// 68000 and 68010
+	UWORD ** pcp = (UWORD **)sp;
+//	printf("pc=%p at %p\n", *pcp, sp);
+	return *pcp;
+
+}
+
+/**
  * Let the client continue.
  */
 void messageSlave(enum action myaction) {
@@ -291,6 +343,41 @@ void rungdb(int sockfd, char const * prg) {
 		int n = readcmd(sockfd);
 		if (n <= 0)
 			break;
+
+		dprintf("-->%s<--\n", buffer);
+
+		// handle CTRL+C
+		if (n == 1 && buffer[0] == 3) {
+			dprintf("CTRL + C received %08lx sp=%08lx, %x\n", theProc, theProc->pr_Task.tc_SPReg, offsetof(struct Task, tc_SPReg));
+			if (!theProc) {
+				reply(sockfd, "E 01");
+				continue;
+			}
+
+			do {
+				Forbid();
+				volatile UWORD * pc = findPC(theProc->pr_Task.tc_SPReg);
+				// probe
+				UWORD x = *pc;
+				*pc = ~x;
+				short ok = *pc != x;
+				*pc = x;
+
+				if (ok) {
+					// try to insert a break point at pc
+					disableBreakpoints();
+					addBreakpoint(pc, 1, 0);
+					enableBreakpoints();
+
+					Permit();
+					reply(sockfd, "OK");
+					continue;
+				}
+				Permit();
+				Delay(1);
+			} while(SetSignal(0L,0L) == 0);
+			continue;
+		}
 
 		short start = 0;
 		while (start < n && buffer[start] != '$')
@@ -714,14 +801,17 @@ int showUsage() {
  * Unload everything.
  */
 void unload(void) {
+	clearBreakpoints();
+	if (theProc)
+		Signal((struct Task *)theProc, SIGBREAKB_CTRL_C);
 	if (seglist) {
 		UnLoadSeg(seglist);
 		seglist = 0;
 		puts("unloaded program");
 	}
 
-	clearBreakpoints();
 	codeseg = dataseg = bssseg = 0;
+	theProc = 0;
 }
 
 struct MyHunk {
@@ -766,7 +856,7 @@ void load(char const * progname, char const * clargs) {
 
 	BPTR stdio = Open((UBYTE* )"*", MODE_READWRITE);
 	dprintf("con %lx\n", stdio);
-	CreateNewProcTags(NP_Entry, (ULONG )startProc,
+	theProc = CreateNewProcTags(NP_Entry, (ULONG )startProc,
 			NP_Input, (ULONG)stdio,
 			NP_Output, (ULONG )stdio,
 			NP_Arguments, (ULONG)clargs,
@@ -775,6 +865,7 @@ void load(char const * progname, char const * clargs) {
 			NP_Cli, 1,
 			NP_Name, (ULONG )progname,
 			TAG_END);
+	dprintf("proc = %08lx\n", theProc);
 }
 
 /**
@@ -787,7 +878,7 @@ void load(char const * progname, char const * clargs) {
 int main(int argc, char *argv[]) {
 	char * sport = 0;
 
-	Printf("bgdbserver 1.0 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
+	Printf("bgdbserver 1.1 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
 
 	setup();
 	atexit(unload);
