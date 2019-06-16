@@ -262,14 +262,21 @@ UWORD * findPC(APTR in) {
 				// mid insn
 				sp += 3*2; // mid insn frame
 			}
-			// handle frestore
-			if (attn & AFF_68881) {
-				sp += 0x1c/2 - 2;
-			} else
-			if (attn & AFF_68882) {
-				sp += 0x3c/2 - 2;
-			}
 
+			if (*sp == 0x4100) {
+				// idle is 2 see below
+			} else {
+				if (*sp != 0x18) {
+//					printf("FRESTORE: %04x\n", *sp);
+					// handle frestore
+					if (attn & AFF_68881) {
+						sp += 0x1c/2 - 2;
+					} else
+					if (attn & AFF_68882) {
+						sp += 0x3c/2 - 2;
+					}
+				}
+			}
 			// disregard UNIMP and BUSY for now^^
 		}
 		sp += 2; // FRESTORE IDLE
@@ -356,7 +363,9 @@ void rungdb(int sockfd, char const * prg) {
 
 			do {
 				Forbid();
-				volatile UWORD * pc = findPC(theProc->pr_Task.tc_SPReg);
+				APTR cursp = theProc->pr_Task.tc_SPReg;
+				int chk = *(UBYTE*)cursp;
+				volatile UWORD * pc = findPC(cursp);
 				// probe
 				UWORD x = *pc;
 				*pc = ~x;
@@ -374,6 +383,7 @@ void rungdb(int sockfd, char const * prg) {
 					continue;
 				}
 				Permit();
+				printf("can't break at %p - %02x\n", pc, chk);
 				Delay(1);
 			} while(SetSignal(0L,0L) == 0);
 			continue;
