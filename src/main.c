@@ -263,23 +263,12 @@ UWORD * findPC(APTR in) {
 				sp += 3*2; // mid insn frame
 			}
 
-			if (*sp == 0x4100) {
-				// idle is 2 see below
-			} else {
-				if (*sp != 0x18) {
-//					printf("FRESTORE: %04x\n", *sp);
-					// handle frestore
-					if (attn & AFF_68881) {
-						sp += 0x1c/2 - 2;
-					} else
-					if (attn & AFF_68882) {
-						sp += 0x3c/2 - 2;
-					}
-				}
-			}
-			// disregard UNIMP and BUSY for now^^
+			UWORD v = * sp;
+			if (v & 0xff00)
+				sp += (v & 0xff) / 2;
+
 		}
-		sp += 2; // FRESTORE IDLE
+		sp += 2; // FRESTORE
 	}
 
 	// 68000 and 68010
@@ -468,13 +457,13 @@ void rungdb(int sockfd, char const * prg) {
 
 		if (startswith(cmd, "qOffsets")) {
 			if (bssseg)
-				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x;", codeseg, dataseg,
+				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x", codeseg, dataseg,
 						bssseg);
 			else if (dataseg)
-				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x;", codeseg, dataseg,
+				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x", codeseg, dataseg,
 						dataseg);
 			else
-				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x;", codeseg, 0, 0);
+				sprintf(buffer, "Text=%08x;Data=%08x;Bss=%08x", codeseg, 0, 0);
 
 			reply(sockfd, buffer);
 			continue;
@@ -888,7 +877,7 @@ void load(char const * progname, char const * clargs) {
 int main(int argc, char *argv[]) {
 	char * sport = 0;
 
-	Printf("bgdbserver 1.1 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
+	Printf("bgdbserver 1.2 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
 
 	setup();
 	atexit(unload);

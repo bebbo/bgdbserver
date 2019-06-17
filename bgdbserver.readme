@@ -3,7 +3,7 @@ Author:       stefan@franke.ms
 Uploader:     stefan@franke.ms
 Architecture: m68k-amigaos
 Type:         dev/debug
-Version:      1.1
+Version:      1.2
 Replaces:     dev/debug/bgdbserver.lha
 Required:     bsdsocket.library (e.g AmiTCP)
 
