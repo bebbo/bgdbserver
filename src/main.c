@@ -350,16 +350,21 @@ void rungdb(int sockfd, char const * prg) {
 				continue;
 			}
 
+			Printf("CTRL + C received\n");
 			do {
 				Forbid();
 				APTR cursp = theProc->pr_Task.tc_SPReg;
 				int chk = *(UBYTE*)cursp;
 				volatile UWORD * pc = findPC(cursp);
-				// probe
-				UWORD x = *pc;
-				*pc = ~x;
-				short ok = *pc != x;
-				*pc = x;
+
+				// check that the pc is somewhere inside the loaded segments
+				short ok = 0;
+				for (ULONG * s = (ULONG *) BADDR(seglist); s; s = (ULONG *) BADDR(*s)) {
+					if ((ULONG *)pc >= s && (ULONG *)pc < s + *(s - 1) - 8) {
+						ok = 1;
+						break;
+					}
+				}
 
 				if (ok) {
 					// try to insert a break point at pc
@@ -369,10 +374,11 @@ void rungdb(int sockfd, char const * prg) {
 
 					Permit();
 					reply(sockfd, "OK");
+					Printf("break at 0x%08lx\n", pc);
 					continue;
 				}
 				Permit();
-				printf("can't break at %p - %02x\n", pc, chk);
+				Printf("can't break at 0x%08lx - %02lx\n", pc, chk);
 				Delay(1);
 			} while(SetSignal(0L,0L) == 0);
 			continue;
@@ -877,7 +883,7 @@ void load(char const * progname, char const * clargs) {
 int main(int argc, char *argv[]) {
 	char * sport = 0;
 
-	Printf("bgdbserver 1.2 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
+	Printf("bgdbserver 1.3 (c) by Stefan 'Bebbo' Franke 2018-2019\n");
 
 	setup();
 	atexit(unload);

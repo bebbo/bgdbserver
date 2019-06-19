@@ -49,3 +49,5 @@ will run the rsh fake on port 987.
 added support to break a running program using CTRL+C
 ## 1.2
 fix breaking a running program 
+## 1.3
+ensure break is inside segment list
